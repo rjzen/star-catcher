@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Star Catcher — Mini Game</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:rgba(255,255,255,0.06);
+    --accent:#ffd166; --muted:#9aa6b2;
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,#071024 0%, #08122a 60%);font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
+  .wrap{min-height:100%;display:flex;align-items:center;justify-content:center;padding:28px;}
+  .card{width:100%;max-width:900px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.012));border-radius:18px;box-shadow:0 8px 30px rgba(2,6,23,0.6);padding:18px;display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start}
+  @media(max-width:880px){.card{grid-template-columns:1fr;max-width:420px}}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+  h1{font-size:20px;color:white;margin:0}
+  p.lead{margin:0;color:var(--muted);font-size:13px}
+  canvas{width:100%;height:480px;border-radius:12px;background:linear-gradient(180deg,#04101f,#071424);display:block}
+  .panel{background:var(--panel);border-radius:12px;padding:12px;color:#e6eef6}
+  .controls{display:flex;flex-direction:column;gap:12px}
+  .info-row{display:flex;justify-content:space-between;gap:8px}
+  .btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:10px;color:var(--muted);cursor:pointer}
+  .btn.primary{background:linear-gradient(90deg,var(--accent),#ffb86b);color:#082033;border:none}
+  .stat{font-weight:700;font-size:18px}
+  .muted{color:var(--muted);font-size:13px}
+  .kbd{display:inline-block;padding:4px 8px;border-radius:6px;background:rgba(255,255,255,0.03);font-family:monospace;font-size:12px}
+  footer.small{font-size:12px;color:var(--muted);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div>
+      <header>
+        <div>
+          <h1>⭐ Star Catcher</h1>
+          <p class="lead">Move the bucket to catch falling stars — survive as long as you can!</p>
+        </div>
+      </header>
+
+      <canvas id="game" width="800" height="480" aria-label="Star Catcher game"></canvas>
+
+      <footer class="small muted">Use ← → or touch/drag to move. Built with plain JavaScript — drop this file into a GitHub Pages site.</footer>
+    </div>
+
+    <aside class="panel controls">
+      <div class="info-row">
+        <div>
+          <div class="muted">Score</div>
+          <div id="score" class="stat">0</div>
+        </div>
+        <div>
+          <div class="muted">Lives</div>
+          <div id="lives" class="stat">3</div>
+        </div>
+      </div>
+
+      <div>
+        <button id="startBtn" class="btn primary">Start Game</button>
+        <button id="pauseBtn" class="btn" disabled>Pause</button>
+        <button id="resetBtn" class="btn" disabled>Reset</button>
+      </div>
+
+      <div style="margin-top:8px">
+        <div class="muted">Difficulty</div>
+        <input id="difficulty" type="range" min="1" max="5" value="2" />
+        <div class="muted" style="margin-top:6px">High score: <span id="best" class="stat">0</span></div>
+      </div>
+
+      <div style="margin-top:8px">
+        <div class="muted">How to play</div>
+        <ul style="padding-left:18px;margin:6px 0 0 0;color:#dfeaf3">
+          <li>Catch falling stars to score points.</li>
+          <li>Missing 3 stars ends the game.</li>
+          <li>Difficulty increases as score grows.</li>
+        </ul>
+      </div>
+
+      <div style="margin-top:8px" class="muted">Controls: <span class="kbd">←</span> <span class="kbd">→</span> or touch/drag</div>
+    </aside>
+  </div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  let W = canvas.width, H = canvas.height;
+  const scoreEl = document.getElementById('score');
+  const livesEl = document.getElementById('lives');
+  const bestEl = document.getElementById('best');
+  const startBtn = document.getElementById('startBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const difficultyRange = document.getElementById('difficulty');
+
+  // Game state
+  let running = false, paused = false, frame=0;
+  let score = 0, lives=3, best = Number(localStorage.getItem('starcatcher_best')||0);
+  bestEl.textContent = best;
+  let bucket = {x: W/2 - 50, y: H - 60, w: 110, h: 36, vx:0, speed:7};
+  let stars = [];
+  let spawnInterval = 60; // frames
+  let gravity = 1.2;
+  let difficultyFactor = parseInt(difficultyRange.value,10);
+
+  function resetGame(){
+    score=0; lives=3; stars=[]; frame=0;
+    bucket.x = W/2 - bucket.w/2;
+    updateUI();
+  }
+
+  function updateUI(){
+    scoreEl.textContent = score;
+    livesEl.textContent = lives;
+    bestEl.textContent = best;
+  }
+
+  function spawnStar(){
+    const size = 14 + Math.random()*18;
+    const x = Math.random()*(W - size - 20) + 10;
+    const vx = (Math.random()-0.5) * 1.4;
+    const vy = 1.2 + Math.random()*1.2 + (score/100);
+    stars.push({x,y: -size,size,vx,vy,rot: Math.random()*Math.PI});
+  }
+
+  function drawRoundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+  }
+
+  function draw(){
+    // background (solid to avoid blending artifacts)
+    ctx.fillStyle = '#061225';
+    ctx.fillRect(0,0,W,H);
+
+    // stars background sparkle
+    for(let i=0;i<40;i++){
+      ctx.globalAlpha = 0.06;
+      ctx.fillStyle = i%3===0? '#0fa3ff': '#ffd166';
+      ctx.fillRect((i*73)%W, (i*47)%H, 2,2);
+    }
+    ctx.globalAlpha = 1;
+
+    // draw bucket
+    ctx.fillStyle = '#0b1220';
+    drawRoundRect(bucket.x-6,bucket.y-10,bucket.w+12,bucket.h+18,12);
+    ctx.fillStyle = '#07304b';
+    ctx.fill();
+    ctx.fillStyle = '#89b4c7';
+    ctx.fillRect(bucket.x, bucket.y, bucket.w, bucket.h);
+
+    // bucket rim
+    ctx.fillStyle = '#063147';
+    ctx.fillRect(bucket.x - 2, bucket.y - 6, bucket.w + 4, 8);
+
+    // draw stars
+    for(const s of stars){
+      ctx.save();
+      ctx.translate(s.x + s.size/2, s.y + s.size/2);
+      ctx.rotate(Math.sin((frame + s.size)*0.03) * 0.5);
+      ctx.translate(-s.x - s.size/2, -s.y - s.size/2);
+      // star shape
+      ctx.beginPath();
+      const cx = s.x + s.size/2, cy = s.y + s.size/2, r = s.size/2;
+      for(let i=0;i<5;i++){
+        const a = i*(2*Math.PI/5) - Math.PI/2;
+        const ax = cx + Math.cos(a)*r;
+        const ay = cy + Math.sin(a)*r;
+        ctx.lineTo(ax, ay);
+        const b = a + Math.PI/5;
+        ctx.lineTo(cx + Math.cos(b)*r*0.45, cy + Math.sin(b)*r*0.45);
+      }
+      ctx.closePath();
+      ctx.fillStyle = 'yellow';
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function step(){
+    if(!running || paused) return;
+    frame++;
+
+    // spawn based on difficulty + score
+    const spawnRate = Math.max(14, spawnInterval - Math.floor(score/10) - (difficultyFactor*6));
+    if(frame % spawnRate === 0) spawnStar();
+
+    // update stars
+    for(let i=stars.length-1;i>=0;i--){
+      const s=stars[i];
+      s.vy += gravity*0.02 * (1 + score/400);
+      s.x += s.vx;
+      s.y += s.vy;
+      s.rot += 0.03;
+
+      // collides with bucket?
+      if(s.y + s.size > bucket.y && s.x + s.size > bucket.x && s.x < bucket.x + bucket.w){
+        // caught
+        score += 10;
+        stars.splice(i,1);
+        if(score > best){ best = score; localStorage.setItem('starcatcher_best', String(best)); }
+        updateUI();
+        continue;
+      }
+
+      // out of bottom
+      if(s.y > H + 40){
+        stars.splice(i,1);
+        lives--;
+        updateUI();
+        if(lives <= 0){
+          endGame();
+        }
+      }
+    }
+
+    // bucket movement friction
+    bucket.x += bucket.vx;
+    bucket.vx *= 0.86;
+    if(bucket.x < 6) { bucket.x = 6; bucket.vx = 0; }
+    if(bucket.x + bucket.w > W - 6){ bucket.x = W - bucket.w - 6; bucket.vx = 0; }
+
+    // increase difficulty a little
+    draw();
+  }
+
+  function loop(){
+    step();
+    requestAnimationFrame(loop);
+  }
+  loop();
+
+  // Input
+  window.addEventListener('keydown', (e) => {
+    if(e.key === 'ArrowLeft'){ bucket.vx = -bucket.speed; }
+    if(e.key === 'ArrowRight'){ bucket.vx = bucket.speed; }
+    if(e.key === ' '){ if(!running) startGame(); else togglePause(); }
+  });
+
+  // touch / drag
+  let dragging=false, lastX=0;
+  canvas.addEventListener('pointerdown', (e) => { dragging=true; lastX = e.clientX; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', (e) => {
+    if(!dragging) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const x = (e.clientX - rect.left) * scaleX;
+    bucket.x = Math.min(Math.max(6, x - bucket.w/2), W - bucket.w - 6);
+  });
+  canvas.addEventListener('pointerup', (e) => { dragging=false; try{ canvas.releasePointerCapture(e.pointerId);}catch(e){} });
+
+  // window resize handler - keep canvas size but allow visual scaling
+  function refreshSizes(){
+    // canvas internal size fixed for stability; we already set width/height attributes
+    W = canvas.width; H = canvas.height;
+  }
+  window.addEventListener('resize', refreshSizes);
+
+  // Game controls
+  function startGame(){
+    running = true; paused = false;
+    spawnInterval = 60;
+    gravity = 1.2 + (difficultyFactor-1)*0.15;
+    startBtn.disabled = true;
+    pauseBtn.disabled = false;
+    resetBtn.disabled = false;
+    resetGame();
+  }
+
+  function togglePause(){
+    if(!running) return;
+    paused = !paused;
+    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  }
+
+  function endGame(){
+    running = false;
+    paused = false;
+    startBtn.disabled = false;
+    pauseBtn.disabled = true;
+    resetBtn.disabled = false;
+    alert('Game over — your score: ' + score + '\\nHigh score: ' + best);
+  }
+
+  startBtn.addEventListener('click', ()=> startGame());
+  pauseBtn.addEventListener('click', ()=> togglePause());
+  resetBtn.addEventListener('click', ()=> { resetGame(); updateUI(); });
+
+  difficultyRange.addEventListener('input', (e) => {
+    difficultyFactor = parseInt(e.target.value, 10);
+  });
+
+  // initial draw
+  draw();
+  updateUI();
+})();
+</script>
+</body>
+</html>
